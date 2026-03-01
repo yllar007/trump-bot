@@ -1,6 +1,6 @@
 import os
 import requests
-import asyncio
+import time
 from datetime import datetime
 from groq import Groq
 
@@ -11,7 +11,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Truth Social API
 TRUTH_SOCIAL_API = "https://truthsocial.com/api/v1"
-TRUMP_ACCOUNT_ID = "109382633260537656"  # Trump's Truth Social ID
+TRUMP_ACCOUNT_ID = "109382633260537656"
 
 client = Groq(api_key=GROQ_API_KEY)
 
@@ -44,10 +44,10 @@ def get_trump_posts():
         return []
 
 def quick_filter(text: str) -> bool:
-    """Kiire 8B filter - kas postitus liigutab turge?"""
+    """Kiire filter - kas postitus liigutab turge?"""
     try:
-        message = client.messages.create(
-            model="mixtral-8x7b-32768",  # Groq 8B mudel
+        message = client.chat.completions.create(
+            model="mixtral-8x7b-32768",
             max_tokens=50,
             messages=[
                 {
@@ -61,17 +61,17 @@ Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad."""
                 }
             ]
         )
-        response_text = message.content[0].text.strip().upper()
+        response_text = message.choices[0].message.content.strip().upper()
         return "JAH" in response_text
     except Exception as e:
         print(f"Filter viga: {e}")
         return False
 
 def analyze_market_impact(text: str) -> str:
-    """70B mudel teeb põhjalik turuanalüüs"""
+    """70B mudel teeb põhjaliku turuanalüüsi"""
     try:
-        message = client.messages.create(
-            model="llama-70b-8192",  # Groq 70B mudel
+        message = client.chat.completions.create(
+            model="llama-70b-8192",
             max_tokens=800,
             messages=[
                 {
@@ -103,7 +103,7 @@ Pea meeles: RISK-OFF = aktsiad ↓, kuld ↑, nafta ↑"""
                 }
             ]
         )
-        return message.content[0].text
+        return message.choices[0].message.content
     except Exception as e:
         print(f"Analüüs viga: {e}")
         return "Analüüs ebaõnnestus"
@@ -112,46 +112,41 @@ def monitor_trump():
     """Peamine monitoorimise funktsioon"""
     print("🤖 Trump Bot käivitatud...")
     seen_posts = set()
-    
+
     while True:
         try:
             posts = get_trump_posts()
-            
+
             for post in posts:
                 post_id = post.get("id")
                 content = post.get("content", "").strip()
-                
-                # Jäta juba nähtud postitused vahele
+
                 if post_id in seen_posts or not content:
                     continue
-                
+
                 seen_posts.add(post_id)
-                
-                # Eemaldame HTML tagid
+
                 content_clean = content.replace("<p>", "").replace("</p>", "")
-                
+
                 print(f"📍 Uus postitus: {content_clean[:100]}...")
-                
-                # KIIRE FILTER
+
                 if quick_filter(content_clean):
                     print("✅ Postitus läbis filtri - analüüsime...")
-                    
-                    # Saada postitus
+
                     telegram_text = f"<b>🔴 TRUMP TRUTH SOCIAL</b>\n\n{content_clean}\n\n<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
                     send_telegram_message(telegram_text)
-                    
-                    # Saada analüüs
+
                     analysis = analyze_market_impact(content_clean)
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
                     print("⏭️ Postitus ei liiguta turge - vaikus")
-            
+
             # Kontrolli iga 1.5 sekundit
-            asyncio.run(asyncio.sleep(1.5))
-            
+            time.sleep(1.5)
+
         except Exception as e:
             print(f"❌ Viga: {e}")
-            asyncio.run(asyncio.sleep(1.5))
+            time.sleep(1.5)
 
 if __name__ == "__main__":
     monitor_trump()
