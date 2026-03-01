@@ -146,12 +146,12 @@ def monitor_trump():
                 else:
                     print("⏭️ Postitus ei liiguta turge - vaikus")
             
-            # Kontrolli iga 10 sekundit
-            asyncio.run(asyncio.sleep(10))
+            # Kontrolli iga 1.5 sekundit
+            asyncio.run(asyncio.sleep(1.5))
             
         except Exception as e:
             print(f"❌ Viga: {e}")
-            asyncio.run(asyncio.sleep(10))
+            asyncio.run(asyncio.sleep(1.5))
 
 if __name__ == "__main__":
     monitor_trump()
