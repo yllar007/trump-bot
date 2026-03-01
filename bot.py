@@ -1,6 +1,8 @@
 import os
 import requests
 import time
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from groq import Groq
 
@@ -148,5 +150,23 @@ def monitor_trump():
             print(f"❌ Viga: {e}")
             time.sleep(1.5)
 
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass
+
+def run_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthHandler)
+    server.serve_forever()
+
 if __name__ == "__main__":
+    # Käivita HTTP server eraldi threadis
+    thread = threading.Thread(target=run_server, daemon=True)
+    thread.start()
+    print(f"🌐 HTTP server käivitatud pordil {os.getenv('PORT', 8080)}")
+    # Käivita bot
     monitor_trump()
