@@ -5,9 +5,9 @@ from datetime import datetime
 from groq import Groq
 
 # API võtmed
-GROQ_API_KEY = os.getenv("GROQ_API_KEY", "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")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8778609956:AAFr29fjbMEe6AJIQMzOSQZVtlkekQLwt3E")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "1562023922")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Truth Social API
 TRUTH_SOCIAL_API = "https://truthsocial.com/api/v1"
