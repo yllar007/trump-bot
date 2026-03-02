@@ -92,6 +92,7 @@ ANALÜÜSI FORMAAT (HTML):
 
 def monitor_trump():
     print("🤖 Trump Bot käivitatud...")
+    send_telegram_message("🤖 Trump Bot käivitatud ja töötab! Monitoorin Trump'i postitusi...")
     seen_posts = set()
     while True:
         try:
