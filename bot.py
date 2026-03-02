@@ -13,7 +13,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # Truth Social API
 TRUTH_SOCIAL_API = "https://truthsocial.com/api/v1"
-TRUMP_ACCOUNT_ID = "109382633260537656"
+TRUMP_ACCOUNT_ID = "107780257626128497"
 
 client = Groq(api_key=GROQ_API_KEY)
 
