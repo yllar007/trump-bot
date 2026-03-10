@@ -2,6 +2,8 @@ import os
 import requests
 import time
 import threading
+import re
+from collections import deque
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from groq import Groq
@@ -30,10 +32,16 @@ def send_telegram_message(text: str):
 def get_trump_posts():
     try:
         url = f"{TRUTH_SOCIAL_API}/accounts/{TRUMP_ACCOUNT_ID}/statuses"
-        response = requests.get(url, timeout=10)
+        print(f"🔍 Pärin Truth Socialilt...")
+        response = requests.get(url, timeout=15, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        print(f"📡 Vastus: {response.status_code}")
         if response.status_code == 200:
             posts = response.json()
             return posts[:5] if isinstance(posts, list) else []
+        else:
+            print(f"⚠️ Truth Social tagastas: {response.status_code}")
         return []
     except Exception as e:
         print(f"Truth Social viga: {e}")
@@ -60,7 +68,7 @@ Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad."""}]
 def analyze_market_impact(text: str) -> str:
     try:
         message = client.chat.completions.create(
-            model="llama-70b-8192",
+            model="llama3-70b-8192",
             max_tokens=800,
             messages=[{"role": "user", "content": f"""Sa oled finantsanalütik. Analüüsi selle Trump postituse potentsiaalne turuefekt.
 
@@ -93,18 +101,28 @@ ANALÜÜSI FORMAAT (HTML):
 def monitor_trump():
     print("🤖 Trump Bot käivitatud...")
     send_telegram_message("🤖 Trump Bot käivitatud ja töötab! Monitoorin Trump'i postitusi...")
-    seen_posts = set()
+    seen_posts = deque(maxlen=500)  # mälu ei kasva lõputult
+    
     while True:
         try:
             posts = get_trump_posts()
+            
+            if not posts:
+                print("⚠️ Postitusi ei saadud, ootan...")
+                time.sleep(30)  # kui Truth Social ei vasta, oota kauem
+                continue
+
             for post in posts:
                 post_id = post.get("id")
                 content = post.get("content", "").strip()
                 if post_id in seen_posts or not content:
                     continue
-                seen_posts.add(post_id)
-                content_clean = content.replace("<p>", "").replace("</p>", "")
+                seen_posts.append(post_id)
+                
+                # Puhasta HTML tagid korralikult
+                content_clean = re.sub(r'<[^>]+>', '', content).strip()
                 print(f"📍 Uus postitus: {content_clean[:100]}...")
+                
                 if quick_filter(content_clean):
                     print("✅ Postitus läbis filtri - analüüsime...")
                     telegram_text = f"<b>🔴 TRUMP TRUTH SOCIAL</b>\n\n{content_clean}\n\n<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
@@ -113,28 +131,27 @@ def monitor_trump():
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
                     print("⏭️ Postitus ei liiguta turge - vaikus")
-            time.sleep(1.5)
+
+            time.sleep(30)  # 30 sekundit pausiks - väldib IP blokeerimist
+
         except Exception as e:
             print(f"❌ Viga: {e}")
-            time.sleep(1.5)
+            time.sleep(60)  # vea korral oota 60 sekundit
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.end_headers()
-        self.wfile.write(b"OK")
+        self.wfile.write(b"Trump Bot OK - running")
     def log_message(self, format, *args):
         pass
 
 if __name__ == "__main__":
-    # HTTP server käivitub ESIMESENA - kohe!
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"🌐 HTTP server käivitatud pordil {port}")
     
-    # Bot käivitub eraldi threadis
     bot_thread = threading.Thread(target=monitor_trump, daemon=True)
     bot_thread.start()
     
-    # HTTP server jookseb põhithreadis (blokeerib)
     server.serve_forever()
