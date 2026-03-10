@@ -132,7 +132,7 @@ def monitor_trump():
                 else:
                     print("⏭️ Postitus ei liiguta turge - vaikus")
 
-            time.sleep(30)  # 30 sekundit pausiks - väldib IP blokeerimist
+            time.sleep(5)  # 5 sekundit pausiks - kiire aga ei blokeeri
 
         except Exception as e:
             print(f"❌ Viga: {e}")
