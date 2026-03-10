@@ -5,7 +5,6 @@ import xml.etree.ElementTree as ET
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
-from groq import Groq
 
 # API võtmed
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -15,7 +14,22 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # RSS proxy läbi Cloudflare Workeri (väldib Truth Social bloki)
 RSS_URL = "https://trump-proxy.yllar007.workers.dev"
 
-client = Groq(api_key=GROQ_API_KEY)
+GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+def groq_request(model: str, messages: list, max_tokens: int = 800) -> str:
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens
+    }
+    response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=30)
+    print(f"Groq HTTP status: {response.status_code}")
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
 
 def send_telegram_message(text: str):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
@@ -58,8 +72,8 @@ def get_trump_posts():
 
 def quick_filter(text: str) -> bool:
     try:
-        print(f"Groq filter päring... API key olemas: {bool(GROQ_API_KEY)}")
-        message = client.chat.completions.create(
+        print(f"Groq filter paring... API key olemas: {bool(GROQ_API_KEY)}")
+        result = groq_request(
             model="mixtral-8x7b-32768",
             max_tokens=50,
             messages=[{"role": "user", "content": f"""Analüüsi see postitus. Kas see on turgu liigutav? Vasta AINULT ühe sõnaga: JAH või EI
@@ -69,7 +83,7 @@ Postitus: "{text}"
 Turgu liigutavad: tariifid, maksud, sõjalisus, forex, börs, nafta, kuld, sanktsioonid, tehingud, aktsiad, Iran, kaubandus, NATO.
 Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""}]
         )
-        response_text = message.choices[0].message.content.strip().upper()
+        response_text = result.strip().upper()
         print(f"Filter vastus: '{response_text}'")
         return "JAH" in response_text or "YES" in response_text or "JA" in response_text
     except Exception as e:
@@ -78,7 +92,7 @@ Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""
 
 def analyze_market_impact(text: str) -> str:
     try:
-        message = client.chat.completions.create(
+        result = groq_request(
             model="llama3-70b-8192",
             max_tokens=800,
             messages=[{"role": "user", "content": f"""Sa oled finantsanalütik. Analüüsi selle Trump postituse potentsiaalne turuefekt.
@@ -104,7 +118,7 @@ ANALÜÜSI FORMAAT (HTML):
 <b>📝 KOKKUVÕTE:</b>
 [Lühike analüüs]"""}]
         )
-        return message.choices[0].message.content
+        return result
     except Exception as e:
         print(f"Analyys viga: {type(e).__name__}: {e}")
         return "Analyys ebaonnestus"
