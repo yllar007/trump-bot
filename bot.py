@@ -28,7 +28,9 @@ def groq_request(model: str, messages: list, max_tokens: int = 800) -> str:
     }
     response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=30)
     print(f"Groq HTTP status: {response.status_code}")
-    response.raise_for_status()
+    if response.status_code != 200:
+        print(f"Groq error body: {response.text}")
+        response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
 
 def send_telegram_message(text: str):
