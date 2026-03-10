@@ -1,5 +1,4 @@
 import os
-import re
 import time
 import threading
 import xml.etree.ElementTree as ET
@@ -32,7 +31,7 @@ def get_trump_posts():
     try:
         response = requests.get(RSS_URL, timeout=15)
         if response.status_code != 200:
-            print(f"⚠️ RSS viga: {response.status_code}")
+            print(f"RSS viga: {response.status_code}")
             return []
 
         root = ET.fromstring(response.text)
@@ -70,6 +69,7 @@ Turgu liigutavad: tariifid, maksud, sõjalisus, forex, börs, nafta, kuld, sankt
 Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""}]
         )
         response_text = message.choices[0].message.content.strip().upper()
+        print(f"Filter vastus: '{response_text}'")
         return "JAH" in response_text or "YES" in response_text or "JA" in response_text
     except Exception as e:
         print(f"Filter viga: {e}")
@@ -109,22 +109,22 @@ ANALÜÜSI FORMAAT (HTML):
         return "Analyys ebaonnestus"
 
 def monitor_trump():
-    print("🤖 Trump Bot käivitatud...")
+    print("Trump Bot kaivitatud...")
     send_telegram_message("🤖 Trump Bot käivitatud! Monitoorin Trump'i postitusi RSS kaudu...")
     seen_ids = set()
 
-    print("📋 Laen olemasolevad postitused...")
+    print("Laen olemasolevad postitused...")
     existing = get_trump_posts()
     for post in existing:
         seen_ids.add(post["id"])
-    print(f"✅ {len(seen_ids)} olemasolevat postitust salvestatud, ootan uusi...")
+    print(f"{len(seen_ids)} olemasolevat postitust salvestatud, ootan uusi...")
 
     while True:
         try:
             posts = get_trump_posts()
 
             if not posts:
-                print("⚠️ Postitusi ei saadud, ootan...")
+                print("Postitusi ei saadud, ootan...")
                 time.sleep(30)
                 continue
 
@@ -136,10 +136,10 @@ def monitor_trump():
                     continue
 
                 seen_ids.add(post_id)
-                print(f"🆕 UUS postitus: {content[:100]}...")
+                print(f"UUS postitus: {content[:100]}...")
 
                 if quick_filter(content):
-                    print("✅ Postitus läbis filtri - analüüsime...")
+                    print("Postitus labis filtri - analyysime...")
                     telegram_text = (
                         f"<b>🔴 TRUMP TRUTH SOCIAL</b>\n\n"
                         f"{content}\n\n"
@@ -149,12 +149,12 @@ def monitor_trump():
                     analysis = analyze_market_impact(content)
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
-                    print("⏭️ Postitus ei liiguta turge - vaikus")
+                    print("Postitus ei liiguta turge - vaikus")
 
             time.sleep(5)
 
         except Exception as e:
-            print(f"❌ Viga: {e}")
+            print(f"Viga: {e}")
             time.sleep(30)
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -189,7 +189,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"🌐 HTTP server käivitatud pordil {port}")
+    print(f"HTTP server kaivitatud pordil {port}")
 
     bot_thread = threading.Thread(target=monitor_trump, daemon=True)
     bot_thread.start()
