@@ -13,16 +13,49 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # RSS proxy läbi Cloudflare Workeri (väldib Truth Social bloki)
 RSS_URL = "https://trump-proxy.yllar007.workers.dev"
-
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-def groq_request(model: str, messages: list, max_tokens: int = 800) -> str:
+# Globaalne mudeli valik (laetakse käivitamisel)
+GROQ_MODEL = "llama-3.3-70b-versatile"
+
+def get_best_groq_model():
+    try:
+        response = requests.get(
+            "https://api.groq.com/openai/v1/models",
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            timeout=10
+        )
+        models = [m["id"] for m in response.json()["data"]]
+        print(f"Saadaolevad mudelid: {models}")
+        preferred = [
+            "llama-3.3-70b-versatile",
+            "llama-3.1-70b-versatile",
+            "llama3-70b-8192",
+            "llama-3.1-8b-instant",
+            "llama3-8b-8192",
+        ]
+        for model in preferred:
+            if model in models:
+                print(f"Kasutan mudelit: {model}")
+                return model
+        # Kui ükski eelistatud pole saadaval, võta esimene llama
+        llama_models = [m for m in models if "llama" in m.lower()]
+        if llama_models:
+            print(f"Kasutan mudelit: {llama_models[0]}")
+            return llama_models[0]
+        print(f"Kasutan mudelit: {models[0]}")
+        return models[0]
+    except Exception as e:
+        print(f"Mudeli vali viga: {e}, kasutan default")
+        return "llama-3.3-70b-versatile"
+
+def groq_request(messages: list, max_tokens: int = 800) -> str:
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
     payload = {
-        "model": model,
+        "model": GROQ_MODEL,
         "messages": messages,
         "max_tokens": max_tokens
     }
@@ -74,9 +107,7 @@ def get_trump_posts():
 
 def quick_filter(text: str) -> bool:
     try:
-        print(f"Groq filter paring... API key olemas: {bool(GROQ_API_KEY)}")
         result = groq_request(
-            model="llama3-8b-8192",
             max_tokens=10,
             messages=[{"role": "user", "content": f"""Analyze this post. Is it market-moving? Reply with ONE word only: YES or NO
 
@@ -95,7 +126,6 @@ NOT market-moving: birthdays, memes, emotions, personal, sports."""}]
 def analyze_market_impact(text: str) -> str:
     try:
         result = groq_request(
-            model="llama3-8b-8192",
             max_tokens=800,
             messages=[{"role": "user", "content": f"""You are a financial analyst. Analyze the potential market impact of this Trump post. Reply in Estonian.
 
@@ -126,8 +156,10 @@ FORMAT (HTML):
         return "Analyys ebaonnestus"
 
 def monitor_trump():
+    global GROQ_MODEL
     print("Trump Bot kaivitatud...")
-    send_telegram_message("🤖 Trump Bot käivitatud! Monitoorin Trump'i postitusi RSS kaudu...")
+    GROQ_MODEL = get_best_groq_model()
+    send_telegram_message(f"🤖 Trump Bot käivitatud! Mudel: {GROQ_MODEL}")
     seen_ids = set()
 
     print("Laen olemasolevad postitused...")
