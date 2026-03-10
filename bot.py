@@ -11,12 +11,20 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# RSS proxy läbi Cloudflare Workeri (väldib Truth Social bloki)
+# RSS proxy läbi Cloudflare Workeri
 RSS_URL = "https://trump-proxy.yllar007.workers.dev"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
-# Globaalne mudeli valik (laetakse käivitamisel)
+# Globaalsed muutujad
 GROQ_MODEL = "llama-3.3-70b-versatile"
+last_error_time = {}
+model_last_refresh = None
+seen_ids = set()
+
+ERROR_THROTTLE_SECONDS = 300   # sama viga max kord 5 min
+MODEL_REFRESH_INTERVAL = 86400 # mudeli refresh kord päevas
+
+# ─── Groq mudeli valik ───────────────────────────────────────────────────────
 
 def get_best_groq_model():
     try:
@@ -38,16 +46,37 @@ def get_best_groq_model():
             if model in models:
                 print(f"Kasutan mudelit: {model}")
                 return model
-        # Kui ükski eelistatud pole saadaval, võta esimene llama
         llama_models = [m for m in models if "llama" in m.lower()]
         if llama_models:
-            print(f"Kasutan mudelit: {llama_models[0]}")
             return llama_models[0]
-        print(f"Kasutan mudelit: {models[0]}")
         return models[0]
     except Exception as e:
         print(f"Mudeli vali viga: {e}, kasutan default")
         return "llama-3.3-70b-versatile"
+
+# ─── Telegram ────────────────────────────────────────────────────────────────
+
+def send_telegram_message(text: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"Telegram viga: {type(e).__name__}: {e}")
+        return False
+
+def send_error_alert(error_key: str, message: str):
+    """Saadab veateavituse Telegrami, aga mitte rohkem kui kord 5 minutis sama vea kohta."""
+    global last_error_time
+    now = time.time()
+    if error_key in last_error_time:
+        if now - last_error_time[error_key] < ERROR_THROTTLE_SECONDS:
+            return
+    last_error_time[error_key] = now
+    send_telegram_message(f"⚠️ <b>TRUMP BOT VIGA</b>\n\n{message}")
+
+# ─── Groq ────────────────────────────────────────────────────────────────────
 
 def groq_request(messages: list, max_tokens: int = 800) -> str:
     headers = {
@@ -62,48 +91,9 @@ def groq_request(messages: list, max_tokens: int = 800) -> str:
     response = requests.post(GROQ_URL, headers=headers, json=payload, timeout=30)
     print(f"Groq HTTP status: {response.status_code}")
     if response.status_code != 200:
-        print(f"Groq error body: {response.text}")
+        print(f"Groq error: {response.text}")
         response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
-
-def send_telegram_message(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    data = {"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        response = requests.post(url, data=data, timeout=10)
-        return response.status_code == 200
-    except Exception as e:
-        print(f"Telegram viga: {type(e).__name__}: {e}")
-        return False
-
-def get_trump_posts():
-    try:
-        response = requests.get(RSS_URL, timeout=15)
-        if response.status_code != 200:
-            print(f"RSS viga: {response.status_code}")
-            return []
-
-        root = ET.fromstring(response.text)
-        posts = []
-        for item in root.findall(".//item"):
-            guid = item.findtext("guid", "")
-            title = item.findtext("title", "")
-            pub_date = item.findtext("pubDate", "")
-
-            if not title or "[No Title]" in title:
-                continue
-
-            posts.append({
-                "id": guid,
-                "content": title,
-                "pub_date": pub_date
-            })
-
-        return posts[:10]
-
-    except Exception as e:
-        print(f"RSS viga: {type(e).__name__}: {e}")
-        return []
 
 def quick_filter(text: str) -> bool:
     try:
@@ -121,6 +111,7 @@ NOT market-moving: birthdays, memes, emotions, personal, sports."""}]
         return "YES" in response_text or "JAH" in response_text
     except Exception as e:
         print(f"Filter viga: {type(e).__name__}: {e}")
+        send_error_alert("groq_filter", f"Groq filter ebaonnestus:\n{type(e).__name__}: {e}")
         return False
 
 def analyze_market_impact(text: str) -> str:
@@ -153,14 +144,56 @@ FORMAT (HTML):
         return result
     except Exception as e:
         print(f"Analyys viga: {type(e).__name__}: {e}")
+        send_error_alert("groq_analysis", f"Groq analyys ebaonnestus:\n{type(e).__name__}: {e}")
         return "Analyys ebaonnestus"
 
+# ─── RSS ─────────────────────────────────────────────────────────────────────
+
+def get_trump_posts():
+    try:
+        response = requests.get(RSS_URL, timeout=15)
+        if response.status_code != 200:
+            print(f"RSS viga: {response.status_code}")
+            send_error_alert("rss_error", f"RSS proxy tagastas: {response.status_code}")
+            return []
+
+        root = ET.fromstring(response.text)
+        posts = []
+        for item in root.findall(".//item"):
+            guid = item.findtext("guid", "")
+            title = item.findtext("title", "")
+            pub_date = item.findtext("pubDate", "")
+
+            if not title or "[No Title]" in title:
+                continue
+
+            posts.append({
+                "id": guid,
+                "content": title,
+                "pub_date": pub_date
+            })
+
+        return posts[:10]
+
+    except Exception as e:
+        print(f"RSS viga: {type(e).__name__}: {e}")
+        send_error_alert("rss_exception", f"RSS viga:\n{type(e).__name__}: {e}")
+        return []
+
+# ─── Peamine monitoorimise loop ──────────────────────────────────────────────
+
 def monitor_trump():
-    global GROQ_MODEL
+    global GROQ_MODEL, model_last_refresh, seen_ids
+
     print("Trump Bot kaivitatud...")
     GROQ_MODEL = get_best_groq_model()
-    send_telegram_message(f"🤖 Trump Bot käivitatud! Mudel: {GROQ_MODEL}")
-    seen_ids = set()
+    model_last_refresh = time.time()
+
+    send_telegram_message(
+        f"🤖 <b>Trump Bot käivitatud!</b>\n"
+        f"Mudel: {GROQ_MODEL}\n"
+        f"Monitoorin Trump'i postitusi..."
+    )
 
     print("Laen olemasolevad postitused...")
     existing = get_trump_posts()
@@ -168,14 +201,31 @@ def monitor_trump():
         seen_ids.add(post["id"])
     print(f"{len(seen_ids)} olemasolevat postitust salvestatud, ootan uusi...")
 
+    consecutive_empty = 0
+
     while True:
         try:
+            now = time.time()
+
+            # Mudeli refresh kord päevas
+            if now - model_last_refresh >= MODEL_REFRESH_INTERVAL:
+                new_model = get_best_groq_model()
+                if new_model != GROQ_MODEL:
+                    send_telegram_message(f"🔄 Groq mudel uuendatud: {GROQ_MODEL} → {new_model}")
+                    GROQ_MODEL = new_model
+                model_last_refresh = now
+
             posts = get_trump_posts()
 
             if not posts:
-                print("Postitusi ei saadud, ootan...")
+                consecutive_empty += 1
+                print(f"Postitusi ei saadud ({consecutive_empty}x), ootan...")
+                if consecutive_empty >= 10:
+                    send_error_alert("rss_empty", "RSS ei tagasta postitusi juba 5 minutit!")
                 time.sleep(30)
                 continue
+
+            consecutive_empty = 0
 
             for post in posts:
                 post_id = post["id"]
@@ -204,7 +254,10 @@ def monitor_trump():
 
         except Exception as e:
             print(f"Viga: {type(e).__name__}: {e}")
+            send_error_alert("main_loop", f"Peamine loop viga:\n{type(e).__name__}: {e}")
             time.sleep(30)
+
+# ─── HTTP server ─────────────────────────────────────────────────────────────
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -227,6 +280,16 @@ class HealthHandler(BaseHTTPRequestHandler):
                 self.send_response(200)
                 self.end_headers()
                 self.wfile.write(b"Filter blokkis - midagi valesti")
+        elif self.path == "/status":
+            status = (
+                f"Bot: OK\n"
+                f"Mudel: {GROQ_MODEL}\n"
+                f"Seen IDs: {len(seen_ids)}\n"
+                f"Aeg: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
+            )
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(status.encode())
         else:
             self.send_response(200)
             self.end_headers()
@@ -234,6 +297,8 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+# ─── Käivitus ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
