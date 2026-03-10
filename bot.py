@@ -24,7 +24,7 @@ def send_telegram_message(text: str):
         response = requests.post(url, data=data, timeout=10)
         return response.status_code == 200
     except Exception as e:
-        print(f"Telegram viga: {e}")
+        print(f"Telegram viga: {type(e).__name__}: {e}")
         return False
 
 def get_trump_posts():
@@ -53,11 +53,12 @@ def get_trump_posts():
         return posts[:10]
 
     except Exception as e:
-        print(f"RSS viga: {e}")
+        print(f"RSS viga: {type(e).__name__}: {e}")
         return []
 
 def quick_filter(text: str) -> bool:
     try:
+        print(f"Groq filter päring... API key olemas: {bool(GROQ_API_KEY)}")
         message = client.chat.completions.create(
             model="mixtral-8x7b-32768",
             max_tokens=50,
@@ -72,7 +73,7 @@ Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""
         print(f"Filter vastus: '{response_text}'")
         return "JAH" in response_text or "YES" in response_text or "JA" in response_text
     except Exception as e:
-        print(f"Filter viga: {e}")
+        print(f"Filter viga: {type(e).__name__}: {e}")
         return False
 
 def analyze_market_impact(text: str) -> str:
@@ -105,7 +106,7 @@ ANALÜÜSI FORMAAT (HTML):
         )
         return message.choices[0].message.content
     except Exception as e:
-        print(f"Analyys viga: {e}")
+        print(f"Analyys viga: {type(e).__name__}: {e}")
         return "Analyys ebaonnestus"
 
 def monitor_trump():
@@ -154,7 +155,7 @@ def monitor_trump():
             time.sleep(5)
 
         except Exception as e:
-            print(f"Viga: {e}")
+            print(f"Viga: {type(e).__name__}: {e}")
             time.sleep(30)
 
 class HealthHandler(BaseHTTPRequestHandler):
