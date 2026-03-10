@@ -42,7 +42,6 @@ def get_trump_posts():
             title = item.findtext("title", "")
             pub_date = item.findtext("pubDate", "")
 
-            # Jäta tühjad postitused vahele
             if not title or "[No Title]" in title:
                 continue
 
@@ -52,7 +51,7 @@ def get_trump_posts():
                 "pub_date": pub_date
             })
 
-        return posts[:10]  # võta 10 viimast
+        return posts[:10]
 
     except Exception as e:
         print(f"RSS viga: {e}")
@@ -71,7 +70,7 @@ Turgu liigutavad: tariifid, maksud, sõjalisus, forex, börs, nafta, kuld, sankt
 Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""}]
         )
         response_text = message.choices[0].message.content.strip().upper()
-        return "JAH" in response_text
+        return "JAH" in response_text or "YES" in response_text or "JA" in response_text
     except Exception as e:
         print(f"Filter viga: {e}")
         return False
@@ -106,15 +105,14 @@ ANALÜÜSI FORMAAT (HTML):
         )
         return message.choices[0].message.content
     except Exception as e:
-        print(f"Analüüs viga: {e}")
-        return "Analüüs ebaõnnestus"
+        print(f"Analyys viga: {e}")
+        return "Analyys ebaonnestus"
 
 def monitor_trump():
     print("🤖 Trump Bot käivitatud...")
     send_telegram_message("🤖 Trump Bot käivitatud! Monitoorin Trump'i postitusi RSS kaudu...")
     seen_ids = set()
 
-    # Lae kõigepealt olemasolevad postitused seen_ids-i (ei saada vanu)
     print("📋 Laen olemasolevad postitused...")
     existing = get_trump_posts()
     for post in existing:
@@ -153,7 +151,7 @@ def monitor_trump():
                 else:
                     print("⏭️ Postitus ei liiguta turge - vaikus")
 
-            time.sleep(5)  # kontrolli iga 5 sekundi järel
+            time.sleep(5)
 
         except Exception as e:
             print(f"❌ Viga: {e}")
@@ -162,7 +160,7 @@ def monitor_trump():
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/test":
-            print("🧪 Test endpoint käivitatud...")
+            print("Test endpoint kaivitatud...")
             test_post = "Trump: We are imposing 25% tariffs on ALL imports from China starting Monday!"
             if quick_filter(test_post):
                 telegram_text = (
@@ -175,11 +173,11 @@ class HealthHandler(BaseHTTPRequestHandler):
                 send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b"Test laabistus - vaata Telegrami!")
+                self.wfile.write(b"Test OK - vaata Telegrami!")
             else:
                 self.send_response(200)
                 self.end_headers()
-                self.wfile.write(b"Filter blokkis - midagi läks valesti")
+                self.wfile.write(b"Filter blokkis - midagi valesti")
         else:
             self.send_response(200)
             self.end_headers()
