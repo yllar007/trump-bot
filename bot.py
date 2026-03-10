@@ -161,9 +161,29 @@ def monitor_trump():
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"Trump Bot OK - running")
+        if self.path == "/test":
+            print("🧪 Test endpoint käivitatud...")
+            test_post = "Trump: We are imposing 25% tariffs on ALL imports from China starting Monday!"
+            if quick_filter(test_post):
+                telegram_text = (
+                    f"<b>🔴 TRUMP TRUTH SOCIAL</b>\n\n"
+                    f"{test_post}\n\n"
+                    f"<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
+                )
+                send_telegram_message(telegram_text)
+                analysis = analyze_market_impact(test_post)
+                send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Test laabistus - vaata Telegrami!")
+            else:
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"Filter blokkis - midagi läks valesti")
+        else:
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"Trump Bot OK - running")
 
     def log_message(self, format, *args):
         pass
