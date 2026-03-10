@@ -74,18 +74,18 @@ def quick_filter(text: str) -> bool:
     try:
         print(f"Groq filter paring... API key olemas: {bool(GROQ_API_KEY)}")
         result = groq_request(
-            model="mixtral-8x7b-32768",
-            max_tokens=50,
-            messages=[{"role": "user", "content": f"""Analüüsi see postitus. Kas see on turgu liigutav? Vasta AINULT ühe sõnaga: JAH või EI
+            model="llama3-8b-8192",
+            max_tokens=10,
+            messages=[{"role": "user", "content": f"""Analyze this post. Is it market-moving? Reply with ONE word only: YES or NO
 
-Postitus: "{text}"
+Post: "{text}"
 
-Turgu liigutavad: tariifid, maksud, sõjalisus, forex, börs, nafta, kuld, sanktsioonid, tehingud, aktsiad, Iran, kaubandus, NATO.
-Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""}]
+Market-moving: tariffs, taxes, military, forex, stocks, oil, gold, sanctions, deals, Iran, trade, NATO, Fed, economy.
+NOT market-moving: birthdays, memes, emotions, personal, sports."""}]
         )
         response_text = result.strip().upper()
         print(f"Filter vastus: '{response_text}'")
-        return "JAH" in response_text or "YES" in response_text or "JA" in response_text
+        return "YES" in response_text or "JAH" in response_text
     except Exception as e:
         print(f"Filter viga: {type(e).__name__}: {e}")
         return False
@@ -93,14 +93,14 @@ Turgu EI liiguta: sünnipäevad, meemid, emotsioonid, isiklikud asjad, sport."""
 def analyze_market_impact(text: str) -> str:
     try:
         result = groq_request(
-            model="llama3-70b-8192",
+            model="llama3-8b-8192",
             max_tokens=800,
-            messages=[{"role": "user", "content": f"""Sa oled finantsanalütik. Analüüsi selle Trump postituse potentsiaalne turuefekt.
+            messages=[{"role": "user", "content": f"""You are a financial analyst. Analyze the potential market impact of this Trump post. Reply in Estonian.
 
-POSTITUS:
+POST:
 "{text}"
 
-ANALÜÜSI FORMAAT (HTML):
+FORMAT (HTML):
 <b>TURUMÕJU ANALÜÜS</b>
 <b>📊 Indeksid:</b>
 - US30: [↑/↓ %]
