@@ -11,8 +11,9 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# RSS proxy läbi Cloudflare Workeri
-RSS_URL = "https://trump-proxy.yllar007.workers.dev"
+# RSS allikad
+RSS_URL = "https://trump-proxy.yllar007.workers.dev"  # Trump RSS proxy
+WH_SCRAPE_URL = "https://trump-proxy.yllar007.workers.dev/?url=https://www.whitehouse.gov/news/"  # White House otse
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Globaalsed muutujad
@@ -20,9 +21,10 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 last_error_time = {}
 model_last_refresh = None
 seen_ids = set()
+seen_wh_ids = set()
 
-ERROR_THROTTLE_SECONDS = 300   # sama viga max kord 5 min
-MODEL_REFRESH_INTERVAL = 86400 # mudeli refresh kord päevas
+ERROR_THROTTLE_SECONDS = 300
+MODEL_REFRESH_INTERVAL = 86400
 
 # ─── Groq mudeli valik ───────────────────────────────────────────────────────
 
@@ -67,7 +69,6 @@ def send_telegram_message(text: str):
         return False
 
 def send_error_alert(error_key: str, message: str):
-    """Saadab veateavituse Telegrami, aga mitte rohkem kui kord 5 minutis sama vea kohta."""
     global last_error_time
     now = time.time()
     if error_key in last_error_time:
@@ -95,7 +96,7 @@ def groq_request(messages: list, max_tokens: int = 800) -> str:
         response.raise_for_status()
     return response.json()["choices"][0]["message"]["content"]
 
-def quick_filter(text: str) -> bool:
+def quick_filter(text: str, source: str = "trump") -> bool:
     try:
         result = groq_request(
             max_tokens=10,
@@ -103,22 +104,23 @@ def quick_filter(text: str) -> bool:
 
 Post: "{text}"
 
-Market-moving: tariffs, taxes, military, forex, stocks, oil, gold, sanctions, deals, Iran, trade, NATO, Fed, economy.
-NOT market-moving: birthdays, memes, emotions, personal, sports."""}]
+Market-moving: tariffs, taxes, military, forex, stocks, oil, gold, sanctions, deals, Iran, trade, NATO, Fed, economy, executive order, policy change.
+NOT market-moving: birthdays, memes, emotions, personal, sports, ceremonies."""}]
         )
         response_text = result.strip().upper()
-        print(f"Filter vastus: '{response_text}'")
+        print(f"Filter vastus ({source}): '{response_text}'")
         return "YES" in response_text or "JAH" in response_text
     except Exception as e:
         print(f"Filter viga: {type(e).__name__}: {e}")
         send_error_alert("groq_filter", f"Groq filter ebaonnestus:\n{type(e).__name__}: {e}")
         return False
 
-def analyze_market_impact(text: str) -> str:
+def analyze_market_impact(text: str, source: str = "trump") -> str:
+    source_label = "TRUMP TRUTH SOCIAL" if source == "trump" else "WHITE HOUSE"
     try:
         result = groq_request(
             max_tokens=800,
-            messages=[{"role": "user", "content": f"""You are a financial analyst. Analyze the potential market impact of this Trump post. Reply in Estonian.
+            messages=[{"role": "user", "content": f"""You are a financial analyst. Analyze the potential market impact of this {source_label} post. Reply in Estonian.
 
 POST:
 "{text}"
@@ -147,14 +149,14 @@ FORMAT (HTML):
         send_error_alert("groq_analysis", f"Groq analyys ebaonnestus:\n{type(e).__name__}: {e}")
         return "Analyys ebaonnestus"
 
-# ─── RSS ─────────────────────────────────────────────────────────────────────
+# ─── Trump RSS ───────────────────────────────────────────────────────────────
 
 def get_trump_posts():
     try:
         response = requests.get(RSS_URL, timeout=15)
         if response.status_code != 200:
-            print(f"RSS viga: {response.status_code}")
-            send_error_alert("rss_error", f"RSS proxy tagastas: {response.status_code}")
+            print(f"Trump RSS viga: {response.status_code}")
+            send_error_alert("rss_error", f"Trump RSS proxy tagastas: {response.status_code}")
             return []
 
         root = ET.fromstring(response.text)
@@ -176,11 +178,56 @@ def get_trump_posts():
         return posts[:10]
 
     except Exception as e:
-        print(f"RSS viga: {type(e).__name__}: {e}")
-        send_error_alert("rss_exception", f"RSS viga:\n{type(e).__name__}: {e}")
+        print(f"Trump RSS viga: {type(e).__name__}: {e}")
+        send_error_alert("rss_exception", f"Trump RSS viga:\n{type(e).__name__}: {e}")
         return []
 
-# ─── Peamine monitoorimise loop ──────────────────────────────────────────────
+# ─── White House RSS ─────────────────────────────────────────────────────────
+
+def get_whitehouse_posts():
+    try:
+        response = requests.get(WH_SCRAPE_URL, timeout=15)
+        if response.status_code != 200:
+            print(f"WH viga: {response.status_code}")
+            send_error_alert("wh_error", f"White House tagastas: {response.status_code}")
+            return []
+
+        html = response.text
+        posts = []
+
+        # Leiame kõik uudiste pealkirjad ja lingid HTML-ist
+        # whitehouse.gov kasutab <h2 class="wp-block-post-title"> struktuuri
+        import re as _re
+        # Leiame href ja pealkiri paarid
+        pattern = _re.compile(
+            r'href="(https://www\.whitehouse\.gov/[^"]+)"[^>]*>\s*([^<]{10,}?)\s*</a>',
+            _re.DOTALL
+        )
+        seen_urls = set()
+        for match in pattern.finditer(html):
+            url = match.group(1)
+            title = match.group(2).strip()
+            # Filtreeri välja menüü lingid ja lühikesed tekstid
+            if url in seen_urls:
+                continue
+            if any(skip in url for skip in ['/briefings-statements', '/presidential-actions', '/fact-sheets', '/releases', '/remarks', '/research', '/news/']):
+                if len(title) > 20 and '\n' not in title:
+                    seen_urls.add(url)
+                    posts.append({
+                        "id": url,
+                        "content": title,
+                        "pub_date": ""
+                    })
+
+        print(f"🏛️ White House: {len(posts)} postitust leitud")
+        return posts[:10]
+
+    except Exception as e:
+        print(f"WH viga: {type(e).__name__}: {e}")
+        send_error_alert("wh_exception", f"White House viga:\n{type(e).__name__}: {e}")
+        return []
+
+# ─── Trump monitor ───────────────────────────────────────────────────────────
 
 def monitor_trump():
     global GROQ_MODEL, model_last_refresh, seen_ids
@@ -192,14 +239,14 @@ def monitor_trump():
     send_telegram_message(
         f"🤖 <b>Trump Bot käivitatud!</b>\n"
         f"Mudel: {GROQ_MODEL}\n"
-        f"Monitoorin Trump'i postitusi..."
+        f"Monitoorin Trump'i postitusi + White House uudiseid..."
     )
 
-    print("Laen olemasolevad postitused...")
+    print("Laen olemasolevad Trump postitused...")
     existing = get_trump_posts()
     for post in existing:
         seen_ids.add(post["id"])
-    print(f"{len(seen_ids)} olemasolevat postitust salvestatud, ootan uusi...")
+    print(f"{len(seen_ids)} olemasolevat Trump postitust salvestatud, ootan uusi...")
 
     consecutive_empty = 0
 
@@ -207,7 +254,6 @@ def monitor_trump():
         try:
             now = time.time()
 
-            # Mudeli refresh kord päevas
             if now - model_last_refresh >= MODEL_REFRESH_INTERVAL:
                 new_model = get_best_groq_model()
                 if new_model != GROQ_MODEL:
@@ -219,9 +265,9 @@ def monitor_trump():
 
             if not posts:
                 consecutive_empty += 1
-                print(f"Postitusi ei saadud ({consecutive_empty}x), ootan...")
+                print(f"Trump postitusi ei saadud ({consecutive_empty}x), ootan...")
                 if consecutive_empty >= 10:
-                    send_error_alert("rss_empty", "RSS ei tagasta postitusi juba 5 minutit!")
+                    send_error_alert("rss_empty", "Trump RSS ei tagasta postitusi juba 5 minutit!")
                 time.sleep(30)
                 continue
 
@@ -235,27 +281,79 @@ def monitor_trump():
                     continue
 
                 seen_ids.add(post_id)
-                print(f"UUS postitus: {content[:100]}...")
+                print(f"UUS Trump postitus: {content[:100]}...")
 
-                if quick_filter(content):
-                    print("Postitus labis filtri - analyysime...")
+                if quick_filter(content, source="trump"):
+                    print("Trump postitus labis filtri - analyysime...")
                     telegram_text = (
                         f"<b>🔴 TRUMP TRUTH SOCIAL</b>\n\n"
                         f"{content}\n\n"
                         f"<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
                     )
                     send_telegram_message(telegram_text)
-                    analysis = analyze_market_impact(content)
+                    analysis = analyze_market_impact(content, source="trump")
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
-                    print("Postitus ei liiguta turge - vaikus")
+                    print("Trump postitus ei liiguta turge - vaikus")
 
             time.sleep(5)
 
         except Exception as e:
-            print(f"Viga: {type(e).__name__}: {e}")
-            send_error_alert("main_loop", f"Peamine loop viga:\n{type(e).__name__}: {e}")
+            print(f"Trump loop viga: {type(e).__name__}: {e}")
+            send_error_alert("main_loop", f"Trump loop viga:\n{type(e).__name__}: {e}")
             time.sleep(30)
+
+# ─── White House monitor ─────────────────────────────────────────────────────
+
+def monitor_whitehouse():
+    global seen_wh_ids
+
+    print("White House monitor kaivitatud...")
+
+    print("Laen olemasolevad White House postitused...")
+    existing = get_whitehouse_posts()
+    for post in existing:
+        seen_wh_ids.add(post["id"])
+    print(f"{len(seen_wh_ids)} olemasolevat WH postitust salvestatud, ootan uusi...")
+
+    while True:
+        try:
+            posts = get_whitehouse_posts()
+
+            if not posts:
+                print("WH postitusi ei saadud, ootan...")
+                time.sleep(60)
+                continue
+
+            for post in posts:
+                post_id = post["id"]
+                content = post["content"].strip()
+
+                if post_id in seen_wh_ids or not content:
+                    continue
+
+                seen_wh_ids.add(post_id)
+                print(f"UUS White House postitus: {content[:100]}...")
+
+                if quick_filter(content, source="whitehouse"):
+                    print("WH postitus labis filtri - analyysime...")
+                    telegram_text = (
+                        f"<b>🏛️ WHITE HOUSE</b>\n\n"
+                        f"{content}\n\n"
+                        f"<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
+                    )
+                    send_telegram_message(telegram_text)
+                    analysis = analyze_market_impact(content, source="whitehouse")
+                    send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
+                else:
+                    print("WH postitus ei liiguta turge - vaikus")
+
+            time.sleep(5)  # HTML uueneb kohe, 5 sek piisab
+
+        except Exception as e:
+            print(f"WH loop viga: {type(e).__name__}: {e}")
+            send_error_alert("wh_loop", f"White House loop viga:\n{type(e).__name__}: {e}")
+            time.sleep(60)
 
 # ─── HTTP server ─────────────────────────────────────────────────────────────
 
@@ -284,7 +382,8 @@ class HealthHandler(BaseHTTPRequestHandler):
             status = (
                 f"Bot: OK\n"
                 f"Mudel: {GROQ_MODEL}\n"
-                f"Seen IDs: {len(seen_ids)}\n"
+                f"Trump seen IDs: {len(seen_ids)}\n"
+                f"WH seen IDs: {len(seen_wh_ids)}\n"
                 f"Aeg: {datetime.now().strftime('%d.%m.%Y %H:%M:%S')}"
             )
             self.send_response(200)
@@ -305,7 +404,10 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"HTTP server kaivitatud pordil {port}")
 
-    bot_thread = threading.Thread(target=monitor_trump, daemon=True)
-    bot_thread.start()
+    # Trump monitor
+    threading.Thread(target=monitor_trump, daemon=True).start()
+
+    # White House monitor
+    threading.Thread(target=monitor_whitehouse, daemon=True).start()
 
     server.serve_forever()
