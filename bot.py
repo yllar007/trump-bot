@@ -196,6 +196,8 @@ def get_whitehouse_posts():
         html = response.text
         posts = []
 
+        # whitehouse.gov uudiste lingid: /releases/, /briefings-statements/,
+        # /presidential-actions/, /fact-sheets/, /remarks/
         pattern = re.compile(
             r'href="(https://www\.whitehouse\.gov/(?:releases|briefings-statements|presidential-actions|fact-sheets|remarks)/[^"]+)"[^>]*>\s*([^<]{15,200}?)\s*</a>',
             re.DOTALL
@@ -229,7 +231,13 @@ def get_whitehouse_posts():
         return []
 
 def get_whitehouse_article_content(url: str) -> str:
-    """Laeb White House artikli täisteksti URL-i järgi proxy kaudu."""
+    """Laeb White House artikli täisteksti URL-i järgi proxy kaudu.
+    
+    whitehouse.gov kasutab class="entry-content wp-block-post-content ..."
+    Vana regex otsis täpset class="entry-content" vastet — aga kuna
+    klassis on mitu nime korraga, ei sobinud. Nüüd kasutame re.search
+    mis leiab klassi olemasolu sõltumata teistest klassinimedest.
+    """
     try:
         proxy_url = f"https://trump-proxy.yllar007.workers.dev/?url={url}"
         response = requests.get(proxy_url, timeout=15)
@@ -238,18 +246,26 @@ def get_whitehouse_article_content(url: str) -> str:
 
         html = response.text
 
-        # Proovime erinevaid sisu konteinereid mida whitehouse.gov kasutab
+        # Leiame entry-content div-i sisu — klass võib sisaldada mitu nime
+        # Otsime kuni järgmise suure sektsionini (Related, footer jne)
         content_patterns = [
-            r'class="[^"]*body-content[^"]*"[^>]*>(.*?)</div>',
-            r'class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>',
-            r'class="[^"]*post-content[^"]*"[^>]*>(.*?)</div>',
-            r'<article[^>]*>(.*?)</article>',
+            # entry-content klass mis võib sisaldada lisaklasse
+            r'class="entry-content[^"]*"[^>]*>(.*?)<div[^>]+class="[^"]*(?:alignfull|site-footer|wp-block-group[^"]*has-light-gray)[^"]*"',
+            # fallback: entry-content kuni </main>
+            r'class="entry-content[^"]*"[^>]*>(.*?)</main>',
         ]
 
         for pattern in content_patterns:
             match = re.search(pattern, html, re.DOTALL)
             if match:
+                # Eemalda kõik HTML tagid
                 text = re.sub(r'<[^>]+>', ' ', match.group(1))
+                # Puhasta tühikud ja erimärgid
+                text = re.sub(r'&amp;', '&', text)
+                text = re.sub(r'&lt;', '<', text)
+                text = re.sub(r'&gt;', '>', text)
+                text = re.sub(r'&#8220;|&#8221;', '"', text)
+                text = re.sub(r'&#8217;', "'", text)
                 text = re.sub(r'\s+', ' ', text).strip()
                 if len(text) > 100:
                     print(f"✅ WH artikkel laetud: {len(text)} tähemärki")
