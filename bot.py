@@ -3,6 +3,7 @@ import time
 import threading
 import xml.etree.ElementTree as ET
 import requests
+import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
@@ -12,8 +13,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # RSS allikad
-RSS_URL = "https://trump-proxy.yllar007.workers.dev"  # Trump RSS proxy
-WH_SCRAPE_URL = "https://trump-proxy.yllar007.workers.dev/?url=https://www.whitehouse.gov/news/"  # White House otse
+RSS_URL = "https://trump-proxy.yllar007.workers.dev"
+WH_SCRAPE_URL = "https://trump-proxy.yllar007.workers.dev/?url=https://www.whitehouse.gov/news/"
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Globaalsed muutujad
@@ -194,13 +195,10 @@ def get_whitehouse_posts():
 
         html = response.text
         posts = []
-        import re as _re
 
-        # whitehouse.gov uudiste lingid: /releases/, /briefings-statements/,
-        # /presidential-actions/, /fact-sheets/, /remarks/
-        pattern = _re.compile(
+        pattern = re.compile(
             r'href="(https://www\.whitehouse\.gov/(?:releases|briefings-statements|presidential-actions|fact-sheets|remarks)/[^"]+)"[^>]*>\s*([^<]{15,200}?)\s*</a>',
-            _re.DOTALL
+            re.DOTALL
         )
 
         seen_urls = set()
@@ -229,6 +227,40 @@ def get_whitehouse_posts():
         print(f"WH viga: {type(e).__name__}: {e}")
         send_error_alert("wh_exception", f"White House viga:\n{type(e).__name__}: {e}")
         return []
+
+def get_whitehouse_article_content(url: str) -> str:
+    """Laeb White House artikli täisteksti URL-i järgi proxy kaudu."""
+    try:
+        proxy_url = f"https://trump-proxy.yllar007.workers.dev/?url={url}"
+        response = requests.get(proxy_url, timeout=15)
+        if response.status_code != 200:
+            return ""
+
+        html = response.text
+
+        # Proovime erinevaid sisu konteinereid mida whitehouse.gov kasutab
+        content_patterns = [
+            r'class="[^"]*body-content[^"]*"[^>]*>(.*?)</div>',
+            r'class="[^"]*entry-content[^"]*"[^>]*>(.*?)</div>',
+            r'class="[^"]*post-content[^"]*"[^>]*>(.*?)</div>',
+            r'<article[^>]*>(.*?)</article>',
+        ]
+
+        for pattern in content_patterns:
+            match = re.search(pattern, html, re.DOTALL)
+            if match:
+                text = re.sub(r'<[^>]+>', ' ', match.group(1))
+                text = re.sub(r'\s+', ' ', text).strip()
+                if len(text) > 100:
+                    print(f"✅ WH artikkel laetud: {len(text)} tähemärki")
+                    return text[:3000]
+
+        print(f"⚠️ WH artikli sisu ei leitud: {url}")
+        return ""
+
+    except Exception as e:
+        print(f"WH artikkel viga: {type(e).__name__}: {e}")
+        return ""
 
 # ─── Trump monitor ───────────────────────────────────────────────────────────
 
@@ -330,23 +362,33 @@ def monitor_whitehouse():
 
             for post in posts:
                 post_id = post["id"]
-                content = post["content"].strip()
+                title = post["content"].strip()
 
-                if post_id in seen_wh_ids or not content:
+                if post_id in seen_wh_ids or not title:
                     continue
 
                 seen_wh_ids.add(post_id)
-                print(f"UUS White House postitus: {content[:100]}...")
+                print(f"UUS White House postitus: {title[:100]}...")
 
-                if quick_filter(content, source="whitehouse"):
+                # Lae artikli täistekst — palju parem analüüs kui ainult pealkiri
+                article_content = get_whitehouse_article_content(post_id)
+                if article_content:
+                    analyze_text = f"Pealkiri: {title}\n\nSisu: {article_content}"
+                    print(f"Analyysime täistekstiga ({len(article_content)} tähemärki)")
+                else:
+                    analyze_text = title
+                    print("Analyysime ainult pealkirjaga (artikkel ei laekunud)")
+
+                if quick_filter(analyze_text, source="whitehouse"):
                     print("WH postitus labis filtri - analyysime...")
                     telegram_text = (
                         f"<b>🏛️ WHITE HOUSE</b>\n\n"
-                        f"{content}\n\n"
+                        f"<b>{title}</b>\n"
+                        f"<a href='{post_id}'>Loe täismahus</a>\n\n"
                         f"<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
                     )
                     send_telegram_message(telegram_text)
-                    analysis = analyze_market_impact(content, source="whitehouse")
+                    analysis = analyze_market_impact(analyze_text, source="whitehouse")
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
                     print("WH postitus ei liiguta turge - vaikus")
@@ -407,10 +449,7 @@ if __name__ == "__main__":
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"HTTP server kaivitatud pordil {port}")
 
-    # Trump monitor
     threading.Thread(target=monitor_trump, daemon=True).start()
-
-    # White House monitor
     threading.Thread(target=monitor_whitehouse, daemon=True).start()
 
     server.serve_forever()
