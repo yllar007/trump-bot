@@ -182,7 +182,7 @@ def get_trump_posts():
         send_error_alert("rss_exception", f"Trump RSS viga:\n{type(e).__name__}: {e}")
         return []
 
-# ─── White House RSS ─────────────────────────────────────────────────────────
+# ─── White House scraper ──────────────────────────────────────────────────────
 
 def get_whitehouse_posts():
     try:
@@ -194,33 +194,36 @@ def get_whitehouse_posts():
 
         html = response.text
         posts = []
-
-        # Leiame kõik uudiste pealkirjad ja lingid HTML-ist
-        # whitehouse.gov kasutab <h2 class="wp-block-post-title"> struktuuri
         import re as _re
-        # Leiame href ja pealkiri paarid
+
+        # whitehouse.gov uudiste lingid: /releases/, /briefings-statements/,
+        # /presidential-actions/, /fact-sheets/, /remarks/
         pattern = _re.compile(
-            r'href="(https://www\.whitehouse\.gov/[^"]+)"[^>]*>\s*([^<]{10,}?)\s*</a>',
+            r'href="(https://www\.whitehouse\.gov/(?:releases|briefings-statements|presidential-actions|fact-sheets|remarks)/[^"]+)"[^>]*>\s*([^<]{15,200}?)\s*</a>',
             _re.DOTALL
         )
+
         seen_urls = set()
         for match in pattern.finditer(html):
             url = match.group(1)
             title = match.group(2).strip()
-            # Filtreeri välja menüü lingid ja lühikesed tekstid
+
             if url in seen_urls:
                 continue
-            if any(skip in url for skip in ['/briefings-statements', '/presidential-actions', '/fact-sheets', '/releases', '/remarks', '/research', '/news/']):
-                if len(title) > 20 and '\n' not in title:
-                    seen_urls.add(url)
-                    posts.append({
-                        "id": url,
-                        "content": title,
-                        "pub_date": ""
-                    })
+            if '\n' in title or len(title) < 15:
+                continue
+            if any(skip in title.lower() for skip in ['read more', 'view all', 'see all', 'learn more']):
+                continue
+
+            seen_urls.add(url)
+            posts.append({
+                "id": url,
+                "content": title,
+                "pub_date": ""
+            })
 
         print(f"🏛️ White House: {len(posts)} postitust leitud")
-        return posts[:10]
+        return posts[:15]
 
     except Exception as e:
         print(f"WH viga: {type(e).__name__}: {e}")
@@ -348,7 +351,7 @@ def monitor_whitehouse():
                 else:
                     print("WH postitus ei liiguta turge - vaikus")
 
-            time.sleep(5)  # HTML uueneb kohe, 5 sek piisab
+            time.sleep(5)
 
         except Exception as e:
             print(f"WH loop viga: {type(e).__name__}: {e}")
