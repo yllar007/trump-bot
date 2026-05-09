@@ -3,7 +3,6 @@ import time
 import threading
 import xml.etree.ElementTree as ET
 import requests
-import re
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 
@@ -13,8 +12,8 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # RSS allikad
-RSS_URL = "https://trump-proxy.yllar007.workers.dev"
-WH_SCRAPE_URL = "https://trump-proxy.yllar007.workers.dev/?url=https://www.whitehouse.gov/news/"
+RSS_URL = "https://trump-proxy.yllar007.workers.dev"  # Trump RSS proxy
+WH_SCRAPE_URL = "https://trump-proxy.yllar007.workers.dev/?url=https://www.whitehouse.gov/news/"  # White House otse
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # Globaalsed muutujad
@@ -183,7 +182,7 @@ def get_trump_posts():
         send_error_alert("rss_exception", f"Trump RSS viga:\n{type(e).__name__}: {e}")
         return []
 
-# ─── White House scraper ──────────────────────────────────────────────────────
+# ─── White House RSS ─────────────────────────────────────────────────────────
 
 def get_whitehouse_posts():
     try:
@@ -196,87 +195,37 @@ def get_whitehouse_posts():
         html = response.text
         posts = []
 
-        # whitehouse.gov uudiste lingid: /releases/, /briefings-statements/,
-        # /presidential-actions/, /fact-sheets/, /remarks/
-        pattern = re.compile(
-            r'href="(https://www\.whitehouse\.gov/(?:releases|briefings-statements|presidential-actions|fact-sheets|remarks)/[^"]+)"[^>]*>\s*([^<]{15,200}?)\s*</a>',
-            re.DOTALL
+        # Leiame kõik uudiste pealkirjad ja lingid HTML-ist
+        # whitehouse.gov kasutab <h2 class="wp-block-post-title"> struktuuri
+        import re as _re
+        # Leiame href ja pealkiri paarid
+        pattern = _re.compile(
+            r'href="(https://www\.whitehouse\.gov/[^"]+)"[^>]*>\s*([^<]{10,}?)\s*</a>',
+            _re.DOTALL
         )
-
         seen_urls = set()
         for match in pattern.finditer(html):
             url = match.group(1)
             title = match.group(2).strip()
-
+            # Filtreeri välja menüü lingid ja lühikesed tekstid
             if url in seen_urls:
                 continue
-            if '\n' in title or len(title) < 15:
-                continue
-            if any(skip in title.lower() for skip in ['read more', 'view all', 'see all', 'learn more']):
-                continue
-
-            seen_urls.add(url)
-            posts.append({
-                "id": url,
-                "content": title,
-                "pub_date": ""
-            })
+            if any(skip in url for skip in ['/briefings-statements', '/presidential-actions', '/fact-sheets', '/releases', '/remarks', '/research', '/news/']):
+                if len(title) > 20 and '\n' not in title:
+                    seen_urls.add(url)
+                    posts.append({
+                        "id": url,
+                        "content": title,
+                        "pub_date": ""
+                    })
 
         print(f"🏛️ White House: {len(posts)} postitust leitud")
-        return posts[:15]
+        return posts[:10]
 
     except Exception as e:
         print(f"WH viga: {type(e).__name__}: {e}")
         send_error_alert("wh_exception", f"White House viga:\n{type(e).__name__}: {e}")
         return []
-
-def get_whitehouse_article_content(url: str) -> str:
-    """Laeb White House artikli täisteksti URL-i järgi proxy kaudu.
-    
-    whitehouse.gov kasutab class="entry-content wp-block-post-content ..."
-    Vana regex otsis täpset class="entry-content" vastet — aga kuna
-    klassis on mitu nime korraga, ei sobinud. Nüüd kasutame re.search
-    mis leiab klassi olemasolu sõltumata teistest klassinimedest.
-    """
-    try:
-        proxy_url = f"https://trump-proxy.yllar007.workers.dev/?url={url}"
-        response = requests.get(proxy_url, timeout=15)
-        if response.status_code != 200:
-            return ""
-
-        html = response.text
-
-        # Leiame entry-content div-i sisu — klass võib sisaldada mitu nime
-        # Otsime kuni järgmise suure sektsionini (Related, footer jne)
-        content_patterns = [
-            # entry-content klass mis võib sisaldada lisaklasse
-            r'class="entry-content[^"]*"[^>]*>(.*?)<div[^>]+class="[^"]*(?:alignfull|site-footer|wp-block-group[^"]*has-light-gray)[^"]*"',
-            # fallback: entry-content kuni </main>
-            r'class="entry-content[^"]*"[^>]*>(.*?)</main>',
-        ]
-
-        for pattern in content_patterns:
-            match = re.search(pattern, html, re.DOTALL)
-            if match:
-                # Eemalda kõik HTML tagid
-                text = re.sub(r'<[^>]+>', ' ', match.group(1))
-                # Puhasta tühikud ja erimärgid
-                text = re.sub(r'&amp;', '&', text)
-                text = re.sub(r'&lt;', '<', text)
-                text = re.sub(r'&gt;', '>', text)
-                text = re.sub(r'&#8220;|&#8221;', '"', text)
-                text = re.sub(r'&#8217;', "'", text)
-                text = re.sub(r'\s+', ' ', text).strip()
-                if len(text) > 100:
-                    print(f"✅ WH artikkel laetud: {len(text)} tähemärki")
-                    return text[:3000]
-
-        print(f"⚠️ WH artikli sisu ei leitud: {url}")
-        return ""
-
-    except Exception as e:
-        print(f"WH artikkel viga: {type(e).__name__}: {e}")
-        return ""
 
 # ─── Trump monitor ───────────────────────────────────────────────────────────
 
@@ -311,6 +260,10 @@ def monitor_trump():
                     send_telegram_message(f"🔄 Groq mudel uuendatud: {GROQ_MODEL} → {new_model}")
                     GROQ_MODEL = new_model
                 model_last_refresh = now
+
+            if not bot_active:
+                time.sleep(5)
+                continue
 
             posts = get_trump_posts()
 
@@ -369,6 +322,10 @@ def monitor_whitehouse():
 
     while True:
         try:
+            if not bot_active:
+                time.sleep(5)
+                continue
+
             posts = get_whitehouse_posts()
 
             if not posts:
@@ -378,38 +335,28 @@ def monitor_whitehouse():
 
             for post in posts:
                 post_id = post["id"]
-                title = post["content"].strip()
+                content = post["content"].strip()
 
-                if post_id in seen_wh_ids or not title:
+                if post_id in seen_wh_ids or not content:
                     continue
 
                 seen_wh_ids.add(post_id)
-                print(f"UUS White House postitus: {title[:100]}...")
+                print(f"UUS White House postitus: {content[:100]}...")
 
-                # Lae artikli täistekst — palju parem analüüs kui ainult pealkiri
-                article_content = get_whitehouse_article_content(post_id)
-                if article_content:
-                    analyze_text = f"Pealkiri: {title}\n\nSisu: {article_content}"
-                    print(f"Analyysime täistekstiga ({len(article_content)} tähemärki)")
-                else:
-                    analyze_text = title
-                    print("Analyysime ainult pealkirjaga (artikkel ei laekunud)")
-
-                if quick_filter(analyze_text, source="whitehouse"):
+                if quick_filter(content, source="whitehouse"):
                     print("WH postitus labis filtri - analyysime...")
                     telegram_text = (
                         f"<b>🏛️ WHITE HOUSE</b>\n\n"
-                        f"<b>{title}</b>\n"
-                        f"<a href='{post_id}'>Loe täismahus</a>\n\n"
+                        f"{content}\n\n"
                         f"<i>{datetime.now().strftime('%d.%m.%Y kl %H:%M')}</i>"
                     )
                     send_telegram_message(telegram_text)
-                    analysis = analyze_market_impact(analyze_text, source="whitehouse")
+                    analysis = analyze_market_impact(content, source="whitehouse")
                     send_telegram_message(f"<b>📊 AI TURU ANALÜÜS</b>\n\n{analysis}")
                 else:
                     print("WH postitus ei liiguta turge - vaikus")
 
-            time.sleep(5)
+            time.sleep(5)  # HTML uueneb kohe, 5 sek piisab
 
         except Exception as e:
             print(f"WH loop viga: {type(e).__name__}: {e}")
@@ -460,12 +407,70 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 # ─── Käivitus ─────────────────────────────────────────────────────────────────
 
+# ─── Telegram käsud (/start, /stop) ─────────────────────────────────────────
+
+bot_active = True  # globaalne lipp
+
+def listen_telegram_commands():
+    """Kuulab Telegrami käske: /stop ja /start"""
+    global bot_active
+    print("📱 Telegram käsukuulaja käivitatud...")
+    last_update_id = None
+
+    while True:
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates"
+            params = {"timeout": 30, "allowed_updates": ["message"]}
+            if last_update_id:
+                params["offset"] = last_update_id + 1
+
+            response = requests.get(url, params=params, timeout=35)
+            if response.status_code != 200:
+                time.sleep(5)
+                continue
+
+            updates = response.json().get("result", [])
+            for update in updates:
+                last_update_id = update["update_id"]
+                msg = update.get("message", {})
+                text = msg.get("text", "").strip().lower()
+                chat_id = str(msg.get("chat", {}).get("id", ""))
+
+                # Ainult lubatud chat saab käske anda
+                if chat_id != str(TELEGRAM_CHAT_ID):
+                    continue
+
+                if text == "/stop":
+                    bot_active = False
+                    send_telegram_message("🛑 <b>Bot peatatud!</b> Saada /start uuesti käivitamiseks.")
+                    print("🛑 Bot peatatud Telegrami käsuga")
+
+                elif text == "/start":
+                    bot_active = True
+                    send_telegram_message("✅ <b>Bot käivitatud!</b> Monitoorin Trump + White House...")
+                    print("✅ Bot käivitatud Telegrami käsuga")
+
+                elif text == "/status":
+                    status = "✅ Aktiivne" if bot_active else "🛑 Peatatud"
+                    send_telegram_message(f"📊 <b>Bot staatus:</b> {status}\n🤖 Mudel: {GROQ_MODEL}\n👀 Trump IDs: {len(seen_ids)}\n🏛️ WH IDs: {len(seen_wh_ids)}")
+
+        except Exception as e:
+            print(f"Telegram käsuviga: {e}")
+            time.sleep(5)
+
+
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"HTTP server kaivitatud pordil {port}")
 
+    # Trump monitor
     threading.Thread(target=monitor_trump, daemon=True).start()
+
+    # White House monitor
     threading.Thread(target=monitor_whitehouse, daemon=True).start()
+
+    # Telegram käsukuulaja
+    threading.Thread(target=listen_telegram_commands, daemon=True).start()
 
     server.serve_forever()
